@@ -1,0 +1,45 @@
+#version 450
+const uint chunkSize = 256;
+layout (local_size_x = chunkSize / 4) in; // 1 thread : 4 items (i.e. 4 uvec4)
+
+layout (binding = 0) readonly buffer Key {
+	vec4 key[];
+};
+layout(binding = 1) readonly buffer Bin {
+    uvec4 bin[];
+};
+layout(binding = 2) writeonly buffer OrderedKey {
+    vec4 orderedKey[];
+};
+
+layout(location = 0) uniform int bitOffset;
+layout(location = 1) uniform int num;
+layout(location = 2) uniform mat4 viewMat;
+layout(location = 3) uniform vec3 depthRange;
+
+void main() {
+	uint gid = gl_GlobalInvocationID.x * 4;
+	if(gid >= num) return; // exit excessive threads in the right-most group
+
+	vec4 zEye, dice[4];
+	for(int i = 0; i < 4; i++) {
+		dice[i] = key[gid + i];
+		zEye[i] = -(viewMat * dice[i]).z;
+	}
+	// normalize to [0,1] and convert to uint
+	uvec4 z = uvec4(clamp((zEye - depthRange.x) * depthRange.z, 0.0, 1.0) * 65535.0);
+
+	// total count of each digits (i.e. 0,1,2 for 2 bits)
+	uvec3 prior = bin[num - 1].xyz;
+	prior.y += prior.x; // offset of all digits
+	prior.z += prior.y;
+
+	uvec4 digit = bitfieldExtract(z, bitOffset, 2);
+	for(int i = 0; (i < 4) && ((gid + i) < num); i++) // ignore the padding key in the right-most tuple
+	{
+		uvec4 offset = bin[gid + i] + uvec4(0, prior);
+		offset *= uvec4(equal(uvec4(digit[i]), uvec4(0, 1, 2, 3)));
+		int j = int(offset.x + offset.y + offset.z + offset.w) - 1; // inclusive scan to exclusive one
+		orderedKey[j] = dice[i];
+	}
+}

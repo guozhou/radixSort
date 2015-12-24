@@ -1,0 +1,32 @@
+#version 450
+const uint chunkSize = 256;
+layout (local_size_x = chunkSize / 4) in; // 1 thread : 4 items (i.e. 1 uvec4)
+
+layout (binding = 0) readonly buffer Key {
+	vec4 key[];
+};
+layout(binding = 1) writeonly buffer Bin {
+    uvec4 bin[];
+};
+
+layout(location = 0) uniform int bitOffset;
+layout(location = 1) uniform int num;
+layout(location = 2) uniform mat4 viewMat;
+layout(location = 3) uniform vec3 depthRange;
+
+void main() {
+	uint gid = gl_GlobalInvocationID.x * 4;
+	if(gid >= num) return; // exit excessive threads in the right-most group
+
+	vec4 zEye;
+	for(int i = 0; i < 4; i++) {
+		zEye[i] = -(viewMat * key[gid + i]).z;
+	}
+	// normalize to [0,1] and convert to uint
+	uvec4 z = uvec4(clamp((zEye - depthRange.x) * depthRange.z, 0.0, 1.0) * 65535.0);
+	
+	uvec4 digit = bitfieldExtract(z, bitOffset, 2);
+	for(int i = 0; i < 4; i++) {
+		bin[gid + i] = uvec4(equal(uvec4(digit[i]), uvec4(0, 1, 2, 3)));
+	}
+}

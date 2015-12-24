@@ -1,0 +1,34 @@
+#version 450
+const uint chunkSize = 256;
+layout (local_size_x = chunkSize / 4) in; // 1 thread : 4 items (i.e. 4 uvec4)
+
+layout (binding = 0) readonly buffer Key {
+	uvec4 key[];
+};
+layout(binding = 1) readonly buffer Bin {
+    uvec4 bin[];
+};
+layout(binding = 2) writeonly buffer OrderedKey {
+    uint orderedKey[];
+};
+
+layout(location = 0) uniform int bitOffset;
+layout(location = 1) uniform int num;
+
+void main() {
+	uint gid = gl_GlobalInvocationID.x * 4;
+	if(gid >= num) return; // exit excessive threads in the right-most group
+	// total count of each digits (i.e. 0,1,2 for 2 bits)
+	uvec3 prior = bin[num - 1].xyz;
+	prior.y += prior.x; // offset of all digits
+	prior.z += prior.y;
+
+	uvec4 tuple = key[gl_GlobalInvocationID.x], digit = bitfieldExtract(tuple, bitOffset, 2);
+	for(int i = 0; (i < 4) && ((gid + i) < num); i++) // ignore the padding key in the right-most tuple
+	{
+		uvec4 offset = bin[gid + i] + uvec4(0, prior);
+		offset *= uvec4(equal(uvec4(digit[i]), uvec4(0, 1, 2, 3)));
+		int j = int(offset.x + offset.y + offset.z + offset.w) - 1; // inclusive scan to exclusive one
+		orderedKey[j] = tuple[i];
+	}
+}

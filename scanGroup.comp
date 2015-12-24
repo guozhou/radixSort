@@ -1,0 +1,54 @@
+#version 450
+const uint chunkSize = 256;
+layout (local_size_x = chunkSize / 4) in; // 1 thread : 4 items (i.e. 4 uvec4)
+const int nStep = 6; // log2(groupSize)
+
+layout(binding = 0) buffer Bin {
+    uvec4 bin[];
+};
+layout(binding = 1) writeonly buffer ReducedBin {
+    uvec4 reducedBin[];
+};
+
+layout(location = 0) uniform int roundedNum;
+
+shared uvec4 reducedDice[gl_WorkGroupSize.x];
+
+void main() {
+	uint gid = gl_GlobalInvocationID.x * 4;
+	if(gid >= roundedNum) return;
+
+	uvec4 dice[4]; // load per thread dice (i.e. 4 uvec4) of chunk
+	dice[0] = bin[gid + 0]; // serial inclusive scan per thread
+	dice[1] = bin[gid + 1] + dice[0];
+	dice[2] = bin[gid + 2] + dice[1];
+	dice[3] = bin[gid + 3] + dice[2];
+
+	// gather per dice sum as the chunk per group
+	uint lid = gl_LocalInvocationID.x;
+	reducedDice[lid] = dice[3];
+
+	// inclusive scan per group (OGL superbible book)
+	// step efficient (log_2 N) and bank conflicts free
+	for(int i = 0; i < nStep; i++)
+	{
+		memoryBarrierShared();
+		barrier(); // inclusive scan per sub-chunk of 2^(i+1) dice
+		if ((lid & (1 << i)) != 0)
+		{
+            uvec4 prior = reducedDice[((lid >> i) << i) - 1];
+			for(int j = 0; j < 4; j++) {
+				dice[j] += prior;
+			}
+            reducedDice[lid] = dice[3];
+        }
+	}
+	// save intra-group inclusive scan
+	for(int i = 0; i < 4; i++) {
+		bin[gid + i] = dice[i];
+	}
+	// the right-most thread per workgroup records the total of this workgroup for inter-group scan
+	if((lid == (gl_WorkGroupSize.x - 1)) || (gid == (roundedNum - 4))) { 
+		reducedBin[gl_WorkGroupID.x] = dice[3]; 
+	}
+}

@@ -1,0 +1,25 @@
+#version 450
+const uint chunkSize = 256;
+layout (local_size_x = chunkSize / 4) in; // 1 thread : 4 items (i.e. 4 uvec4)
+
+layout(binding = 0) buffer Bin {
+    uvec4 bin[];
+};
+layout(binding = 1) readonly buffer ReducedBin {
+    uvec4 reducedBin[];
+};
+
+layout(location = 0) uniform int num;
+
+void main() {
+	uint gid = gl_GlobalInvocationID.x * 4;
+	if(gid >= num) return; // exit excessive threads in the right-most group
+	// the left-most work group requires no gathering
+	uint wid = gl_WorkGroupID.x;
+	if(wid == 0) return;
+	// propogating sum downwards
+	uvec4 prior = reducedBin[wid - 1];
+	for(int i = 0; i < 4; i++) {
+		bin[gid + i] += prior;
+	}
+}
